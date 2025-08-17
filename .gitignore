@@ -4,3 +4,7 @@
 /ultralytics/models/fastsam/__pycache__
 /ultralytics/models/__pycache__
 model/yolov10/YOLOv10b_VietFood67_SGD_new_bigger.pt
+/__pycache__
+.pt
+venv
+YOLOv10b_VietFood67_SGD_new_bigger.pt
