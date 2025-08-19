@@ -109,17 +109,18 @@ import torch
 
 LISTEN_IP = "0.0.0.0"     
 LISTEN_PORT = 5010      
-UNITY_IP = "127.0.0.1"  
+UNITY_IP = "192.168.1.10"  
 UNITY_PORT = 5011      
 CHUNK_SIZE = 4096  
 
 def load_model():
     print("Loading YOLO model...")
-    model = YOLO("YOLOv10b_VietFood67_SGD_new_bigger.pt")   
+    model = YOLO("model/yolov10/YOLOv10b_VietFood67_SGD_new_bigger.pt")   
     # model = YOLO("yolov8n.pt")   
     device = "mps" if torch.backends.mps.is_available() else \
              "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
+    model.to(device)
     return model
 
 def do_inference(conf, image, model):
@@ -144,25 +145,19 @@ def build_detections(results):
                     "w": xywh[2],   # width
                     "h": xywh[3],   # height
                 },
-                "xyxy": {
-                    "x1": xyxy[0],  # top-left-x
-                    "y1": xyxy[1],  # top-left-y
-                    "x2": xyxy[2],  # bottom-right-x
-                    "y2": xyxy[3],  # bottom-right-y
-                },
+                # "xyxy": {
+                #     "x1": xyxy[0],  # top-left-x
+                #     "y1": xyxy[1],  # top-left-y
+                #     "x2": xyxy[2],  # bottom-right-x
+                #     "y2": xyxy[3],  # bottom-right-y
+                # },
                 "confidence": float(conf)
             })
     return detections
 
 def receive_image(sock):
-    num_chunks_data, _ = sock.recvfrom(1024)
-    num_chunks = int(num_chunks_data.decode())
-    img_bytes = b""
-    for _ in range(num_chunks):
-        chunk, _ = sock.recvfrom(CHUNK_SIZE)
-        img_bytes += chunk
-
-    arr = np.frombuffer(img_bytes, np.uint8)
+    data, _ = sock.recvfrom(200_000)
+    arr = np.frombuffer(data, np.uint8)
     frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
     return frame
 
@@ -188,7 +183,7 @@ def main():
                     continue
 
                 # Run inference
-                results = do_inference(0.3, frame, model)
+                results = do_inference(0.1, frame, model)
 
                 # Convert results to structured detections
                 detections = build_detections(results)
@@ -198,12 +193,13 @@ def main():
 
                 # Send back to Unity
                 sock.sendto(message, (UNITY_IP, UNITY_PORT))
+                print(f"Sent {len(detections)} detections to Unity.")
 
                 # (Optional) Show annotated frame for debugging
-                # annotated = results[0].plot()
-                # cv2.imshow("Received Frame", annotated)
-                # if cv2.waitKey(1) & 0xFF == ord('q'):
-                #     break
+                annotated = results[0].plot()
+                cv2.imshow("Received Frame", annotated)
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
 
             except socket.timeout:
                 pass

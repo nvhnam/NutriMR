@@ -8,3 +8,4 @@ model/yolov10/YOLOv10b_VietFood67_SGD_new_bigger.pt
 .pt
 venv
 YOLOv10b_VietFood67_SGD_new_bigger.pt
+/ultralytics
