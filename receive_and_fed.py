@@ -280,7 +280,7 @@ def main(protocol):
     print('Protocol:', protocol)
     model = load_model()
     sock = init_frame_network(protocol)
-    # sockUDP = init_label_network(protocol)
+    sockUDP = init_label_network("udp")
     try:
         prev_time = time.time()
         while True:
@@ -310,12 +310,11 @@ def main(protocol):
                 message = json.dumps(detections).encode("utf-8")
 
                 
-                # if sockUDP is None:
-                #     print("Failed to initialize label network. Skipping this frame.")
-                #     continue
+                if sockUDP is None:
+                    print("Failed to initialize label network. Skipping this frame.")
 
                 # Send to Unity
-                # send_label("udp", sockUDP, message)
+                send_label("udp", sockUDP, message)
                 # (Optional) Show annotated frame for debugging
                 annotated = results[0].plot()
                 # Overlay FPS on the video feed
