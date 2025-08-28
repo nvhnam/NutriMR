@@ -109,7 +109,7 @@ import torch
 
 LISTEN_IP = "0.0.0.0"     
 LISTEN_PORT = 5010      
-UNITY_IP = "192.168.1.10"  
+UNITY_IP = "192.168.1.7"  
 UNITY_PORT = 5011      
 CHUNK_SIZE = 4096  
 
@@ -183,7 +183,7 @@ def main():
                     continue
 
                 # Run inference
-                results = do_inference(0.1, frame, model)
+                results = do_inference(0.8, frame, model)
 
                 # Convert results to structured detections
                 detections = build_detections(results)
