@@ -7,6 +7,7 @@ from ultralytics import YOLO
 import torch
 import time
 import argparse
+import time
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Choose protocol to use (UDP or TCP).")
@@ -281,6 +282,7 @@ def main(protocol):
     sock = init_frame_network(protocol)
     # sockUDP = init_label_network(protocol)
     try:
+        prev_time = time.time()
         while True:
             try:
                 # data, addr = sock.recvfrom(200_000)
@@ -290,6 +292,11 @@ def main(protocol):
                 frame = receive_image(sock, protocol)
                 if frame is None:
                     continue
+
+                # Calculate FPS
+                current_time = time.time()
+                fps = 1 / (current_time - prev_time)
+                prev_time = current_time
 
                 # print('Input resolution is:', frame.shape[:2])
 
@@ -311,7 +318,8 @@ def main(protocol):
                 # send_label("udp", sockUDP, message)
                 # (Optional) Show annotated frame for debugging
                 annotated = results[0].plot()
-                print('Showing annotated frame...')
+                # Overlay FPS on the video feed
+                cv2.putText(annotated, f"FPS: {fps:.2f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
                 cv2.imshow("Received Frame", annotated)
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
