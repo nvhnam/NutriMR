@@ -1,9 +1,17 @@
 import json
 import socket
+import struct
 import numpy as np
 import cv2
 from ultralytics import YOLO
 import torch
+import time
+import argparse
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Choose protocol to use (UDP or TCP).")
+    parser.add_argument("--protocol", type=str, default="udp", choices=["udp", "tcp"], help="Protocol to use (udp or tcp)")
+    return parser.parse_args()
 
 
 # def load_model():
@@ -109,9 +117,9 @@ import torch
 
 LISTEN_IP = "0.0.0.0"     
 LISTEN_PORT = 5010      
-UNITY_IP = "192.168.1.10"  
+UNITY_IP = "192.168.1.7"  
 UNITY_PORT = 5011      
-CHUNK_SIZE = 4096  
+CHUNK_SIZE = 1200  
 
 def load_model():
     print("Loading YOLO model...")
@@ -155,21 +163,123 @@ def build_detections(results):
             })
     return detections
 
-def receive_image(sock):
-    data, _ = sock.recvfrom(200_000)
-    arr = np.frombuffer(data, np.uint8)
-    frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-    return frame
+# This is for TCP
+def recv_all(sock, length):
+    """Receive exactly `length` bytes from a TCP socket"""
+    buf = b''
+    while len(buf) < length:
+        data = sock.recv(length - len(buf))
+        if not data:
+            return None  # connection closed
+        buf += data
+    return buf
 
-def main():
-    model = load_model()
+def receive_image(sock, protocol):
+    if (protocol == "udp"):
+        chunks = {}
+        total_chunks = None
+        start_time = time.time()
 
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind((LISTEN_IP, LISTEN_PORT))
-    sock.settimeout(0.01)
+        while True:
+            try:
+                data, _ = sock.recvfrom(CHUNK_SIZE + 2)
+                chunk_index = data[0]
+                total_chunks = data[1]
+                chunk_data = data[2:]
+
+                # Store the chunk
+                if chunk_index not in chunks:
+                    chunks[chunk_index] = chunk_data
+                else:
+                    print(f"Duplicate chunk received: {chunk_index}")
+
+                # Check if all chunks are received
+                if len(chunks) == total_chunks:
+                    break
+
+                # Timeout to avoid infinite waiting
+                if time.time() - start_time > 5:  # 5 seconds timeout
+                    raise TimeoutError("Timeout while waiting for all chunks")
+                    break
+
+            except Exception as e:
+                # print(f"Error receiving chunk: {e}")
+                return None
+
+        # Reassemble the image data
+        try:
+            image_data = b"".join(chunks[i] for i in range(total_chunks))
+        except KeyError as e:
+            print(f"Missing chunk: {e}")
+            return None
+
+        # Decode the image
+        arr = np.frombuffer(image_data, np.uint8)
+        frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        return frame
+    elif (protocol == "tcp"):
+        length_data = recv_all(sock, 4)
+        if not length_data:
+            return None
+        frame_length = struct.unpack('<I', length_data)[0]
+
+        # 2. Read JPEG data
+        frame_data = recv_all(sock, frame_length)
+        if frame_data is None:
+            return None
+
+        # 3. Decode JPEG into numpy array (OpenCV BGR image)
+        arr = np.frombuffer(frame_data, np.uint8)
+        frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        return frame
+
+def init_frame_network(protocol):
+    if (protocol == "udp"):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind((LISTEN_IP, LISTEN_PORT))
+        sock.settimeout(0.01)
+    elif (protocol == "tcp"):
+        server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server_sock.bind((LISTEN_IP, LISTEN_PORT))
+        server_sock.listen(1)
+        print(f"Listening for TCP connection on {LISTEN_IP}:{LISTEN_PORT}...")
+        sock, addr = server_sock.accept()
+        print(f"Accepted TCP connection from {addr}")
 
     print(f"Listening for frames on {LISTEN_IP}:{LISTEN_PORT}...")
+    return sock
 
+def init_label_network(protocol):
+    # Need to send label to the UNITY IP
+    if protocol == "udp":
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # Allow address reuse
+    elif protocol == "tcp":
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # Allow address reuse
+        try:
+            sock.connect((UNITY_IP, UNITY_PORT))  # Connect to Unity server
+        except Exception as e:
+            print(f"Error connecting to Unity server: {e}")
+            sock.close()
+            return None
+    return sock
+
+def send_label(protocol, sock, message):
+    if (protocol == "udp"):
+        # Send back to Unity
+        sock.sendto(message, (UNITY_IP, UNITY_PORT))
+    elif protocol == "tcp":
+        # Prefix message with its length (4 bytes, little-endian)
+        msg_len = struct.pack('<I', len(message))
+        sock.sendall(msg_len + message)
+    print('Sent detections via:', protocol)
+
+def main(protocol):
+    print('Protocol:', protocol)
+    model = load_model()
+    sock = init_frame_network(protocol)
+    # sockUDP = init_label_network(protocol)
     try:
         while True:
             try:
@@ -177,13 +287,14 @@ def main():
                 # arr = np.frombuffer(data, np.uint8)
                 # frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
 
-                frame = receive_image(sock)
-                
+                frame = receive_image(sock, protocol)
                 if frame is None:
                     continue
 
+                # print('Input resolution is:', frame.shape[:2])
+
                 # Run inference
-                results = do_inference(0.1, frame, model)
+                results = do_inference(0.7, frame, model)
 
                 # Convert results to structured detections
                 detections = build_detections(results)
@@ -191,12 +302,16 @@ def main():
                 # Encode as JSON
                 message = json.dumps(detections).encode("utf-8")
 
-                # Send back to Unity
-                sock.sendto(message, (UNITY_IP, UNITY_PORT))
-                print(f"Sent {len(detections)} detections to Unity.")
+                
+                # if sockUDP is None:
+                #     print("Failed to initialize label network. Skipping this frame.")
+                #     continue
 
+                # Send to Unity
+                # send_label("udp", sockUDP, message)
                 # (Optional) Show annotated frame for debugging
                 annotated = results[0].plot()
+                print('Showing annotated frame...')
                 cv2.imshow("Received Frame", annotated)
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
@@ -214,4 +329,6 @@ def main():
         cv2.destroyAllWindows()
 
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+    protocol = args.protocol
+    main(protocol)
