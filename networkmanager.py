@@ -24,20 +24,21 @@ class NetworkManager:
             buf += data
         return buf
     def init_frame_network(self):
-        if (self.protocol == "udp"):
+        if self.protocol == "tcp":
+            self.server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.server_sock.bind((self.LISTEN_IP, self.LISTEN_PORT))
+            self.server_sock.listen(1)
+            print(f"Listening for TCP connection on {self.LISTEN_IP}:{self.LISTEN_PORT}...")
+            sock, addr = self.server_sock.accept()
+            print(f"Accepted TCP connection from {addr}")
+            return sock
+        elif self.protocol == "udp":
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sock.bind((self.LISTEN_IP, self.LISTEN_PORT))
             sock.settimeout(0.01)
-        elif (self.protocol == "tcp"):
-            server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            server_sock.bind((self.LISTEN_IP, self.LISTEN_PORT))
-            server_sock.listen(1)
-            print(f"Listening for TCP connection on {self.LISTEN_IP}:{self.LISTEN_PORT}...")
-            sock, addr = server_sock.accept()
-            print(f"Accepted TCP connection from {addr}")
+            return sock
 
-        print(f"Listening for frames on {self.LISTEN_IP}:{self.LISTEN_PORT}...")
-        return sock
     def init_label_network(self, protocol):
         if protocol == "udp":
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -122,14 +123,19 @@ class NetworkManager:
         self.sock_label.close()
         self.sock_frame.close()
     def refresh(self):
-        if hasattr(self, "sock_frame") and self.sock_frame:
+        if self.sock_frame:
             try:
                 self.sock_frame.close()
-            except:
+            except OSError:
                 pass
+            self.sock_frame = None
+
         if hasattr(self, "server_sock") and self.server_sock:
             try:
                 self.server_sock.close()
-            except:
+            except OSError:
                 pass
+            self.server_sock = None
+
         self.sock_frame = self.init_frame_network()
+
