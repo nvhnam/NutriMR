@@ -126,7 +126,12 @@ def load_model():
 def do_inference(conf, image, model):
     results = model.predict(image, conf=conf, imgsz=640, verbose=False)
     return results
-
+def remove_human(detections):
+    for detection in detections:
+        if detection["class"] == "Con nguoi (Human)":
+            print("Human detected, removing from results.")
+            detections.remove(detection)
+    return detections
 def build_detections(results):
     detections = []
     for result in results[0]: # Remember to use results[0] for YOLOv10 model and results for YOLOv8 model
@@ -187,6 +192,8 @@ def main():
 
                 # Convert results to structured detections
                 detections = build_detections(results)
+                detections = remove_human(detections)
+                print(detections)
 
                 # Encode as JSON
                 message = json.dumps(detections).encode("utf-8")
