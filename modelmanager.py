@@ -12,6 +12,7 @@ class ModelManager:
         self.load_model()
         self.networkManager = networkmanager.NetworkManager(protocol=protocol, UNITY_IP="192.168.1.7", UNITY_PORT=5011, LISTEN_PORT=5010, 
         no_split=no_split)
+        self.networkManager.init_frame_network()
     def load_model(self):
         print("Loading YOLO model...")
         self.model = YOLO("model/yolov10/YOLOv10b_VietFood67_SGD_new_bigger.pt")   

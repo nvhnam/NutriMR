@@ -1,3 +1,4 @@
+from datetime import datetime
 import struct
 import socket
 import numpy as np
@@ -14,8 +15,8 @@ class NetworkManager:
         self.UNITY_PORT = UNITY_PORT
         self.LISTEN_PORT = LISTEN_PORT
         self.sock_label = self.init_label_network("udp")
-        self.sock_frame = self.init_frame_network()
         self.no_split = no_split
+        self.call_number = 0
 
     # This is for TCP
     def recv_all(self, length):
@@ -36,12 +37,15 @@ class NetworkManager:
             print(f"Listening for TCP connection on {self.LISTEN_IP}:{self.LISTEN_PORT}...")
             sock, addr = self.server_sock.accept()
             print(f"Accepted TCP connection from {addr}")
-            return sock
+            self.sock_frame = sock
+            return
+
         elif self.protocol == "udp":
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sock.bind((self.LISTEN_IP, self.LISTEN_PORT))
             sock.settimeout(0.01)
-            return sock
+            self.sock_frame = sock
+            return
 
     def init_label_network(self, protocol):
         if protocol == "udp":
@@ -153,4 +157,34 @@ class NetworkManager:
             self.server_sock = None
 
         self.sock_frame = self.init_frame_network()
-
+    def change_unity_ip(self, new_ip):
+        self.UNITY_IP = new_ip
+        self.refresh()
+    
+    def receive_file(self, port):
+        print(f'call number: {self.call_number}')
+        self.call_number += 1
+        if self.protocol == "udp":
+            # tcp only
+            pass
+        elif self.protocol == "tcp":
+            HOST = "0.0.0.0"
+            BUFFER_SIZE = 4096
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                s.bind((HOST, port))
+                s.listen(1)
+                print('Waiting for connection...')
+                conn, addr = s.accept()
+                with conn:
+                    print('Connected by', addr)
+                    # get current date and time
+                    time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    file_name = f"received_file_{time}.csv"
+                    with open(file_name, "wb") as f:
+                        while True:
+                            data = conn.recv(BUFFER_SIZE)
+                            if not data:
+                                break
+                            f.write(data)
+                    print(f"File received successfully at {time}")
