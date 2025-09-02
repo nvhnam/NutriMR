@@ -13,6 +13,7 @@ from functools import partial
 def parse_args():
     parser = argparse.ArgumentParser(description="Choose protocol to use (UDP or TCP).")
     parser.add_argument("--protocol", type=str, default="udp", choices=["udp", "tcp"], help="Protocol to use (udp or tcp)")
+    parser.add_argument("--no_split", action="store_true", help="Disable splitting of image data into chunks")
     return parser.parse_args()
 
 class App:
@@ -89,12 +90,13 @@ class App:
         self.update_frame()
         self.root.mainloop()
 
-def main(protocol):
-    modelManager = modelmanager.ModelManager(protocol=protocol)
+def main(protocol, no_split):
+    modelManager = modelmanager.ModelManager(protocol=protocol, no_split=no_split)
     app = App(modelManager)
     app.run()
 
 if __name__ == "__main__":
     args = parse_args()
     protocol = args.protocol
-    main(protocol)
+    no_split = args.no_split
+    main(protocol, no_split)

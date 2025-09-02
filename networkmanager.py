@@ -3,6 +3,8 @@ import socket
 import numpy as np
 import cv2
 import time
+
+from ultralytics import data
 class NetworkManager:
     LISTEN_IP = "0.0.0.0"           
     CHUNK_SIZE = 1200  
@@ -13,7 +15,7 @@ class NetworkManager:
         self.LISTEN_PORT = LISTEN_PORT
         self.sock_label = self.init_label_network("udp")
         self.sock_frame = self.init_frame_network()
-        self.no_split = False
+        self.no_split = no_split
 
     # This is for TCP
     def recv_all(self, length):
@@ -65,7 +67,7 @@ class NetworkManager:
         # print('Sent detections via:', protocol)
     def receive_image(self):
         if (self.protocol == "udp"):
-            if (self.no_split == false):
+            if (self.no_split == False):
                 chunks = {}
                 total_chunks = None
                 start_time = time.time()
@@ -108,7 +110,15 @@ class NetworkManager:
                 frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
                 return frame
             else:
-                pass
+                try:
+                    data, _ = self.sock_frame.recvfrom(200_000)
+                    arr = np.frombuffer(data, np.uint8)
+                    frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+                    return frame
+                except socket.timeout:
+                    pass
+                except Exception as e:
+                    print("Error:", e)
         elif (self.protocol == "tcp"):
             length_data = self.recv_all(4)
             if not length_data:
