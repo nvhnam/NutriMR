@@ -4,15 +4,17 @@ import numpy as np
 import cv2
 import time
 class NetworkManager:
-    LISTEN_IP = "0.0.0.0"     
-    LISTEN_PORT = 5010      
-    UNITY_IP = "192.168.1.7"  
-    UNITY_PORT = 5011      
+    LISTEN_IP = "0.0.0.0"           
     CHUNK_SIZE = 1200  
-    def __init__(self, protocol):
+    def __init__(self, protocol, UNITY_IP, UNITY_PORT, LISTEN_PORT, no_split):
         self.protocol = protocol
+        self.UNITY_IP = UNITY_IP
+        self.UNITY_PORT = UNITY_PORT
+        self.LISTEN_PORT = LISTEN_PORT
         self.sock_label = self.init_label_network("udp")
         self.sock_frame = self.init_frame_network()
+        self.no_split = False
+
     # This is for TCP
     def recv_all(self, length):
         """Receive exactly `length` bytes from a TCP socket"""
@@ -63,47 +65,50 @@ class NetworkManager:
         # print('Sent detections via:', protocol)
     def receive_image(self):
         if (self.protocol == "udp"):
-            chunks = {}
-            total_chunks = None
-            start_time = time.time()
+            if (self.no_split == false):
+                chunks = {}
+                total_chunks = None
+                start_time = time.time()
 
-            while True:
+                while True:
+                    try:
+                        data, _ = self.sock_frame.recvfrom(self.CHUNK_SIZE + 2)
+                        chunk_index = data[0]
+                        total_chunks = data[1]
+                        chunk_data = data[2:]
+
+                        # Store the chunk
+                        if chunk_index not in chunks:
+                            chunks[chunk_index] = chunk_data
+                        else:
+                            print(f"Duplicate chunk received: {chunk_index}")
+
+                        # Check if all chunks are received
+                        if len(chunks) == total_chunks:
+                            break
+
+                        # Timeout to avoid infinite waiting
+                        if time.time() - start_time > 5:  # 5 seconds timeout
+                            raise TimeoutError("Timeout while waiting for all chunks")
+                            break
+
+                    except Exception as e:
+                        # print(f"Error receiving chunk: {e}")
+                        return None
+
+                # Reassemble the image data
                 try:
-                    data, _ = self.sock_frame.recvfrom(self.CHUNK_SIZE + 2)
-                    chunk_index = data[0]
-                    total_chunks = data[1]
-                    chunk_data = data[2:]
-
-                    # Store the chunk
-                    if chunk_index not in chunks:
-                        chunks[chunk_index] = chunk_data
-                    else:
-                        print(f"Duplicate chunk received: {chunk_index}")
-
-                    # Check if all chunks are received
-                    if len(chunks) == total_chunks:
-                        break
-
-                    # Timeout to avoid infinite waiting
-                    if time.time() - start_time > 5:  # 5 seconds timeout
-                        raise TimeoutError("Timeout while waiting for all chunks")
-                        break
-
-                except Exception as e:
-                    # print(f"Error receiving chunk: {e}")
+                    image_data = b"".join(chunks[i] for i in range(total_chunks))
+                except KeyError as e:
+                    print(f"Missing chunk: {e}")
                     return None
 
-            # Reassemble the image data
-            try:
-                image_data = b"".join(chunks[i] for i in range(total_chunks))
-            except KeyError as e:
-                print(f"Missing chunk: {e}")
-                return None
-
-            # Decode the image
-            arr = np.frombuffer(image_data, np.uint8)
-            frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-            return frame
+                # Decode the image
+                arr = np.frombuffer(image_data, np.uint8)
+                frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+                return frame
+            else:
+                pass
         elif (self.protocol == "tcp"):
             length_data = self.recv_all(4)
             if not length_data:
