@@ -94,7 +94,7 @@ class Utility():
             bg="#FDFAF6"
         )
         receive_head_tracking_data_button = tk.Button(window, text="Start Receiving Head Tracking Data",
-            command=lambda: self.receive_head_tracking_data,
+            command=self.receive_head_tracking_data,
             highlightbackground="#FDFAF6"
         )
         visualize_eye_tracking_data_label = tk.Label(window, text="Visualize Eye Tracking Data",
