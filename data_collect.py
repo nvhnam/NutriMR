@@ -74,6 +74,7 @@ class Utility():
         unity_ip_entry = tk.Entry(window, width=12,
             font=("Courier", 16),
             bg="#E4EFE7",
+            fg="#333333"
         )
         set_unity_ip_button = tk.Button(window, text="Set Unity IP Address",
             command=lambda: self.set_unity_ip_address(unity_ip_entry.get()),
@@ -131,4 +132,5 @@ class Utility():
 
     
 if __name__ == "__main__":
+    print("Starting Utility...")
     utility = Utility()
