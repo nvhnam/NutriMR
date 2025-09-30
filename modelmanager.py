@@ -34,6 +34,9 @@ class ModelManager:
                 boxes.cls.int().tolist(),
                 boxes.conf.tolist()
             ):
+                class_name = result.names[cls]
+                if class_name == "Con nguoi" or class_name == "Con nguoi (Human)" or class_name == "Human":
+                    continue  # Skip human detections
                 detections.append({
                     "class": result.names[cls],
                     "bbox": {
