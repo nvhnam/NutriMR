@@ -3,222 +3,100 @@ import socket
 import numpy as np
 import cv2
 from ultralytics import YOLO
-import torch
+import time
+import argparse
+import modelmanager
+import tkinter as tk
+from PIL import Image, ImageTk
+from functools import partial
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Choose protocol to use (UDP or TCP).")
+    parser.add_argument("--protocol", type=str, default="udp", choices=["udp", "tcp"], help="Protocol to use (udp or tcp)")
+    parser.add_argument("--no_split", action="store_true", help="Disable splitting of image data into chunks")
+    return parser.parse_args()
 
-# def load_model():
-#     print("breakpoint 1")
-#     model = YOLO("yolov8n.pt")
-#     device = "mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu"
-#     print(f"Using device: {device}")
-#     return model
+class App:
+    def __init__(self, modelManager):
+        self.modelManager = modelManager
+        self.prev_time = time.time()
+        self.latest_frame = None
 
-# # def preprocess(image):
-# #     print("breakpoint 2")
-# #     img = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-# #     img = cv2.resize(img, (640, 640))
-# #     img = img.astype(np.float32) / 255.0
-# #     img = img.astype(np.float16)
-# #     img = np.transpose(img, (2, 0, 1))
-# #     img = np.expand_dims(img, axis=0)
-# #     return img
+        # Setup Tkinter
+        self.root = tk.Tk()
+        self.root.title("YOLO Real-Time Viewer")
+        self.label = tk.Label(self.root)
+        self.label.pack()
 
+        # Example button (you can bind it to any function you want)
+        self.btn = tk.Button(self.root, text="Refresh (TCP only)", 
+                             command=partial(self.on_button_click, self.modelManager.networkManager))
+        self.btn.pack(pady=10)
 
-# def do_inference(conf, image, model):
-#     print("breakpoint 3")
-#     res = model.predict(image, conf=conf, imgsz=640)
-#     return res
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
+    def update_frame(self):
+        """Grab latest frame, run YOLO, and update Tkinter label in real time"""
+        try:
+            frame = self.modelManager.networkManager.receive_image()
+            if frame is None:
+                self.root.after(10, self.update_frame)
+                return
 
-# # # IP and port to listen on
-# # LISTEN_IP = "0.0.0.0"   # Listen on all interfaces
-# # LISTEN_PORT = 5010      # Must match sender’s port
+            # Calculate FPS
+            current_time = time.time()
+            fps = 1 / (current_time - self.prev_time)
+            self.prev_time = current_time
 
+            # Run YOLO inference
+            results = self.modelManager.do_inference(0.7, frame)
+            detections = self.modelManager.build_detections(results)
+            message = json.dumps(detections).encode("utf-8")
+            self.modelManager.networkManager.send_label("udp", message)
 
+            # Annotate
+            annotated = results[0].plot()
+            cv2.putText(annotated, f"FPS: {fps:.2f}", (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
-# model = load_model()  # Load the YOLO model
-# # model.to(device)  # Move the model to the specified device
+            # Convert to Tkinter image
+            img_rgb = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
+            img = Image.fromarray(img_rgb)
+            imgtk = ImageTk.PhotoImage(image=img)
 
-# # def main():
-# #     # Create and bind a UDP socket
-# #     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-# #     sock.bind((LISTEN_IP, LISTEN_PORT))
-# #     sock.settimeout(0.01)  # short timeout so we can update the window even if a packet is late
+            self.label.config(image=imgtk)
+            self.label.image = imgtk
 
-# #     # Prepare the window
-# #     cv2.namedWindow("Received Frame", cv2.WINDOW_NORMAL)
-# #     cv2.startWindowThread()
+        except socket.timeout:
+            pass
+        except Exception as e:
+            print("Error:", e)
 
-# #     frame = None
-# #     try:
-# #         while True:
-# #             # 1. Try to receive one JPEG packet (non-blocking-ish)
-# #             try:
-# #                 data, _ = sock.recvfrom(200_000)
-# #                 arr = np.frombuffer(data, np.uint8)
-# #                 decoded = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-# #                 if decoded is not None:
-# #                     frame = decoded
-# #             except socket.timeout:
-# #                 pass
+        # Keep looping
+        self.root.after(10, self.update_frame)
 
-# #             # 2. Always display the latest frame
-# #             if frame is not None:
-# #                 print(type(frame))
-# #                 # results = do_inference(0.1, preprocess(frame), model)                # Run inference
-# #                 # print(results[0].boxes)               # Print detection results
-# #                 # annotated_frame = results[0].plot()   # Draw detections
-# #                 # cv2.imshow("Received Frame", annotated_frame)
-                
-# #                 # cv2.imshow("Received Frame", frame)
+    def on_button_click(self, networkManager):
+        """Do something when button is pressed (example: save frame)"""
+        # if self.latest_frame is not None:
+        #     cv2.imwrite("saved_frame.jpg", self.latest_frame)
+        #     print("Saved current frame!")
+        networkManager.refresh()
 
-# #             # 3. Pump the GUI event loop (no key checks)
-# #             # if cv2.waitKey(1) & 0xFF == ord('q'):
-# #             #     break
+    def on_close(self):
+        self.modelManager.networkManager.self_destruct()
+        self.root.destroy()
 
-# #     except KeyboardInterrupt:
-# #         pass
-# #     finally:
-# #         sock.close()
-# #         cv2.destroyAllWindows()
+    def run(self):
+        self.update_frame()
+        self.root.mainloop()
 
-# def main():
-#     print("Starting inference...")
-#     image = cv2.imread("D:\\NutriMR\\NutriMR\\f35.png")
-#     # print(image)
-#     if image is None:
-#         raise FileNotFoundError("Image not found! Check your path again.")
-#     # processed_img = preprocess(image)
-#     results = do_inference(0.1, image, model)
-#     print(f"result: {results}")
-#     print(type(results))
-#     print(results[0].boxes)  # Print detection results
-#     annotated_frame = results[0].plot()  # Draw detections
-#     cv2.imshow("Received Frame", annotated_frame)
-#     cv2.waitKey(0)
-
-# if __name__ == "__main__":
-#     main()
-
-
-
-
-### -------------------------------------------------------- ###
-
-# --------------------- Nam Code ------------------------------#
-
-LISTEN_IP = "0.0.0.0"     
-LISTEN_PORT = 5010      
-UNITY_IP = "192.168.1.7"  
-UNITY_PORT = 5011      
-CHUNK_SIZE = 4096  
-
-def load_model():
-    print("Loading YOLO model...")
-    model = YOLO("model/yolov10/YOLOv10b_VietFood67_SGD_new_bigger.pt")   
-    # model = YOLO("yolov8n.pt")   
-    device = "mps" if torch.backends.mps.is_available() else \
-             "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Using device: {device}")
-    model.to(device)
-    return model
-
-def do_inference(conf, image, model):
-    results = model.predict(image, conf=conf, imgsz=640, verbose=False)
-    return results
-def remove_human(detections):
-    for detection in detections:
-        if detection["class"] == "Con nguoi (Human)":
-            print("Human detected, removing from results.")
-            detections.remove(detection)
-    return detections
-def build_detections(results):
-    detections = []
-    for result in results[0]: # Remember to use results[0] for YOLOv10 model and results for YOLOv8 model
-        boxes = result.boxes
-        for xywh, xyxy, cls, conf in zip(
-            boxes.xywh.tolist(),
-            boxes.xyxy.tolist(),
-            boxes.cls.int().tolist(),
-            boxes.conf.tolist()
-        ):
-            detections.append({
-                "class": result.names[cls],
-                "bbox": {
-                    "cx": xywh[0],  # center-x
-                    "cy": xywh[1],  # center-y
-                    "w": xywh[2],   # width
-                    "h": xywh[3],   # height
-                },
-                # "xyxy": {
-                #     "x1": xyxy[0],  # top-left-x
-                #     "y1": xyxy[1],  # top-left-y
-                #     "x2": xyxy[2],  # bottom-right-x
-                #     "y2": xyxy[3],  # bottom-right-y
-                # },
-                "confidence": float(conf)
-            })
-    return detections
-
-def receive_image(sock):
-    data, _ = sock.recvfrom(200_000)
-    arr = np.frombuffer(data, np.uint8)
-    frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-    return frame
-
-def main():
-    model = load_model()
-
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind((LISTEN_IP, LISTEN_PORT))
-    sock.settimeout(0.01)
-
-    print(f"Listening for frames on {LISTEN_IP}:{LISTEN_PORT}...")
-
-    try:
-        while True:
-            try:
-                # data, addr = sock.recvfrom(200_000)
-                # arr = np.frombuffer(data, np.uint8)
-                # frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-
-                frame = receive_image(sock)
-                
-                if frame is None:
-                    continue
-
-                # Run inference
-                results = do_inference(0.8, frame, model)
-
-                # Convert results to structured detections
-                detections = build_detections(results)
-                detections = remove_human(detections)
-                print(detections)
-
-                # Encode as JSON
-                message = json.dumps(detections).encode("utf-8")
-
-                # Send back to Unity
-                sock.sendto(message, (UNITY_IP, UNITY_PORT))
-                print(f"Sent {len(detections)} detections to Unity.")
-
-                # (Optional) Show annotated frame for debugging
-                annotated = results[0].plot()
-                cv2.imshow("Received Frame", annotated)
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    break
-
-            except socket.timeout:
-                pass
-            except Exception as e:
-                print("Error:", e)
-
-    except KeyboardInterrupt:
-        print("Shutting down...")
-
-    finally:
-        sock.close()
-        cv2.destroyAllWindows()
+def main(protocol, no_split):
+    modelManager = modelmanager.ModelManager(protocol=protocol, no_split=no_split)
+    app = App(modelManager)
+    app.run()
 
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+    protocol = args.protocol
+    no_split = args.no_split
+    main(protocol, no_split)
