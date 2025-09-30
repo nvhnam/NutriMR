@@ -18,13 +18,13 @@ class Utility():
     def first_init_eye_tracking_receive(self):
         if self.is_first_call_eye:
             self.EyeTrackingNetworkManager = networkmanager.NetworkManager(protocol="tcp", 
-                UNITY_IP="192.168.1.7", UNITY_PORT=self.eye_tracking_port, LISTEN_PORT=self.eye_tracking_port,
+                UNITY_IP="10.0.10.129", UNITY_PORT=self.eye_tracking_port, LISTEN_PORT=self.eye_tracking_port,
                 no_split=True)
             self.is_first_call_eye = False
     def first_init_head_tracking_receive(self):
         if self.is_first_call_head:
             self.HeadTrackingNetworkManager = networkmanager.NetworkManager(protocol="tcp", 
-                UNITY_IP="192.168.1.7", UNITY_PORT=self.head_tracking_port, LISTEN_PORT=self.head_tracking_port,
+                UNITY_IP="10.0.10.129", UNITY_PORT=self.head_tracking_port, LISTEN_PORT=self.head_tracking_port,
                 no_split=True)
             self.is_first_call_head = False
     def receive_eye_tracking_data(self):

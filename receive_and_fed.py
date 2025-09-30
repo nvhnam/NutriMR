@@ -52,6 +52,7 @@ class App:
             results = self.modelManager.do_inference(0.7, frame)
             detections = self.modelManager.build_detections(results)
             message = json.dumps(detections).encode("utf-8")
+            print("Detections:", message)
             self.modelManager.networkManager.send_label("udp", message)
 
             # Annotate
