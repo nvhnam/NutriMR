@@ -54,8 +54,14 @@ class ModelManager:
                     "confidence": float(conf)
                 })
 
-        # select the detection with the highest confidence
+        # select the detection with the highest confidence for each class
         if detections:
-            detections = [max(detections, key=lambda x: x["confidence"])]
+            unique_classes = set(d['class'] for d in detections)
+            filtered_detections = []
+            for cls in unique_classes:
+                class_detections = [d for d in detections if d['class'] == cls]
+                best_detection = max(class_detections, key=lambda x: x['confidence'])
+                filtered_detections.append(best_detection)
+            detections = filtered_detections
         return detections
     
