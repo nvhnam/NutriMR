@@ -20,7 +20,7 @@ _SLOW_INTERVAL = 10   # seconds
 
 class NetworkManager:
     LISTEN_IP = "0.0.0.0"
-    CHUNK_SIZE = 8192  # must match MaxUdpPacketSize in CurrentFrameCapturer.cs
+    CHUNK_SIZE = 1400  # must match MaxUdpPacketSize in CurrentFrameCapturer.cs
     def __init__(self, protocol, UNITY_IP, UNITY_PORT, LISTEN_PORT, no_split):
         self.protocol = protocol
         self.UNITY_IP = UNITY_IP
