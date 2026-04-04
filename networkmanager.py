@@ -7,8 +7,6 @@ import cv2
 import time
 import threading
 
-from ultralytics import data
-
 # Ports for IP discovery handshake
 _HOLOLENS_BROADCAST_PORT = 5010   # HoloLens → Mac
 _MAC_BROADCAST_PORT = 5011        # Mac → HoloLens
@@ -22,7 +20,7 @@ _SLOW_INTERVAL = 10   # seconds
 
 class NetworkManager:
     LISTEN_IP = "0.0.0.0"
-    CHUNK_SIZE = 1200
+    CHUNK_SIZE = 8192  # must match MaxUdpPacketSize in CurrentFrameCapturer.cs
     def __init__(self, protocol, UNITY_IP, UNITY_PORT, LISTEN_PORT, no_split):
         self.protocol = protocol
         self.UNITY_IP = UNITY_IP
@@ -35,6 +33,8 @@ class NetworkManager:
         self._hololens_ip = None
         self._discovery_running = False
         self._discovery_threads = []
+        self.sock_frame = None
+        self._frame_ready = False
 
     # ------------------------------------------------------------------ #
     #  IP Discovery                                                        #
@@ -141,6 +141,7 @@ class NetworkManager:
             sock, addr = self.server_sock.accept()
             print(f"Accepted TCP connection from {addr}")
             self.sock_frame = sock
+            self._frame_ready = True
             return
 
         elif self.protocol == "udp":
@@ -151,6 +152,7 @@ class NetworkManager:
             sock.bind((self.LISTEN_IP, self.LISTEN_PORT))
             sock.settimeout(0.01)
             self.sock_frame = sock
+            self._frame_ready = True
             return
 
     def init_label_network(self, protocol):
@@ -176,59 +178,55 @@ class NetworkManager:
             self.sock_label.sendall(msg_len + message)
         # print('Sent detections via:', protocol)
     def receive_image(self):
-        if (self.protocol == "udp"):
-            if (self.no_split == False):
-                chunks = {}
-                total_chunks = None
-                start_time = time.time()
+        if self.protocol == "udp":
+            # Packet header: [frame_id_hi][frame_id_lo][chunk_index][total_chunks][data...]
+            chunks = {}
+            total_chunks = None
+            current_frame_id = None
+            start_time = time.time()
 
-                while True:
-                    try:
-                        data, _ = self.sock_frame.recvfrom(self.CHUNK_SIZE + 2)
-                        chunk_index = data[0]
-                        total_chunks = data[1]
-                        chunk_data = data[2:]
+            while True:
+                try:
+                    data, _ = self.sock_frame.recvfrom(self.CHUNK_SIZE + 4)
+                    if len(data) < 4:
+                        continue
 
-                        # Store the chunk
-                        if chunk_index not in chunks:
-                            chunks[chunk_index] = chunk_data
-                        else:
-                            print(f"Duplicate chunk received: {chunk_index}")
+                    frame_id    = (data[0] << 8) | data[1]
+                    chunk_index = data[2]
+                    total_chunks = data[3]
+                    chunk_data  = data[4:]
 
-                        # Check if all chunks are received
-                        if len(chunks) == total_chunks:
-                            break
+                    if current_frame_id is None:
+                        current_frame_id = frame_id
 
-                        # Timeout to avoid infinite waiting
-                        if time.time() - start_time > 5:  # 5 seconds timeout
-                            raise TimeoutError("Timeout while waiting for all chunks")
-                            break
+                    if frame_id != current_frame_id:
+                        # New frame started arriving — drop the stale incomplete one
+                        chunks = {chunk_index: chunk_data}
+                        current_frame_id = frame_id
+                        total_chunks = data[3]
+                        start_time = time.time()
+                        continue
 
-                    except Exception as e:
-                        # print(f"Error receiving chunk: {e}")
+                    chunks[chunk_index] = chunk_data
+
+                    if len(chunks) == total_chunks:
+                        break
+
+                    if time.time() - start_time > 2:
                         return None
 
-                # Reassemble the image data
-                try:
-                    image_data = b"".join(chunks[i] for i in range(total_chunks))
-                except KeyError as e:
-                    print(f"Missing chunk: {e}")
+                except socket.timeout:
+                    return None
+                except Exception:
                     return None
 
-                # Decode the image
-                arr = np.frombuffer(image_data, np.uint8)
-                frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-                return frame
-            else:
-                try:
-                    data, _ = self.sock_frame.recvfrom(200_000)
-                    arr = np.frombuffer(data, np.uint8)
-                    frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-                    return frame
-                except socket.timeout:
-                    pass
-                except Exception as e:
-                    print("Error:", e)
+            try:
+                image_data = b"".join(chunks[i] for i in range(total_chunks))
+            except KeyError:
+                return None
+
+            arr = np.frombuffer(image_data, np.uint8)
+            return cv2.imdecode(arr, cv2.IMREAD_COLOR)
         elif (self.protocol == "tcp"):
             length_data = self.recv_all(4)
             if not length_data:
@@ -262,7 +260,8 @@ class NetworkManager:
                 pass
             self.server_sock = None
 
-        self.sock_frame = self.init_frame_network()
+        if self._frame_ready:
+            self.init_frame_network()
     def change_unity_ip(self, new_ip):
         self.UNITY_IP = new_ip
         self.refresh()

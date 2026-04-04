@@ -46,6 +46,8 @@ def listen_for_hololens():
     global hololens_ip
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        if hasattr(socket, "SO_REUSEPORT"):
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
         s.bind(("0.0.0.0", HOLOLENS_BROADCAST_PORT))
         s.settimeout(1.0)
         while running:

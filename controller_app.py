@@ -77,7 +77,7 @@ def _build_detections(results) -> list:
 CMD_PORT       = 5015   # Mac → HoloLens  commands (UDP)
 EYE_FILE_PORT  = 5012   # HoloLens → Mac  eye CSV  (TCP)
 HEAD_FILE_PORT = 5013   # HoloLens → Mac  head CSV (TCP)
-FRAME_PORT     = 5010   # HoloLens → Mac  frames   (UDP)
+FRAME_PORT     = 5016   # HoloLens → Mac  frames   (UDP)
 LABEL_PORT     = 5014   # Mac → HoloLens  labels   (UDP)
 
 DATA_DIR = "participant_data"
@@ -109,6 +109,9 @@ class ControllerApp:
         self.root.configure(bg=BG)
         self.root.geometry("1350x800")
         self.root.minsize(1000, 620)
+
+        # File-receive state
+        self._receiving = False
 
         # Audio state
         self._recording    = False
@@ -289,20 +292,26 @@ class ControllerApp:
             self._head_var.set("Head tracking: stopped ■")
 
     def _receive_files(self):
+        if self._receiving:
+            self._eye_var.set("Already receiving — please wait…")
+            return
+        self._receiving = True
+
         prefix    = self._prefix()
         eye_path  = self._path(f"{prefix}_eye.csv")
         head_path = self._path(f"{prefix}_head.csv")
+        remaining = [2]
+
+        def _recv(port, path):
+            self._nm.receive_file(port, path)
+            remaining[0] -= 1
+            if remaining[0] == 0:
+                self._receiving = False
 
         # Start TCP listeners BEFORE sending the commands so HoloLens
         # can connect immediately when it receives CMD:SEND_*
-        threading.Thread(
-            target=self._nm.receive_file,
-            args=(EYE_FILE_PORT, eye_path), daemon=True,
-        ).start()
-        threading.Thread(
-            target=self._nm.receive_file,
-            args=(HEAD_FILE_PORT, head_path), daemon=True,
-        ).start()
+        threading.Thread(target=_recv, args=(EYE_FILE_PORT,  eye_path),  daemon=True).start()
+        threading.Thread(target=_recv, args=(HEAD_FILE_PORT, head_path), daemon=True).start()
 
         time.sleep(0.3)   # give servers time to bind
 
@@ -373,10 +382,16 @@ class ControllerApp:
     # ─────────────────────────────────────────────────────────────────── #
 
     def _frame_loop(self):
+        _logged_res = False
         while True:
             frame = self._nm.receive_image()
             if frame is None:
                 continue
+
+            if not _logged_res:
+                h, w = frame.shape[:2]
+                print(f"[App] First frame received: {w}x{h}")
+                _logged_res = True
 
             if self._model:
                 try:
