@@ -266,11 +266,12 @@ class NetworkManager:
         self.UNITY_IP = new_ip
         self.refresh()
     
-    def receive_file(self, port, filepath=None):
+    def receive_file(self, port, filepath=None, timeout=30):
         """
         TCP server: receives one file from HoloLens on `port`.
         If `filepath` is given, the file is saved there; otherwise a
         timestamped name is used in the current directory.
+        `timeout` (seconds) limits how long we wait for HoloLens to connect.
         """
         self.call_number += 1
         print(f'[NetworkManager] receive_file call #{self.call_number}, port={port}')
@@ -285,8 +286,13 @@ class NetworkManager:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             s.bind((HOST, port))
             s.listen(1)
+            s.settimeout(timeout)
             print(f'[NetworkManager] Waiting for connection on port {port}...')
-            conn, addr = s.accept()
+            try:
+                conn, addr = s.accept()
+            except socket.timeout:
+                print(f'[NetworkManager] Timed out on port {port} after {timeout}s — no connection from HoloLens')
+                return
             with conn:
                 print(f'[NetworkManager] Connected by {addr}')
                 os.makedirs(os.path.dirname(filepath) or ".", exist_ok=True)

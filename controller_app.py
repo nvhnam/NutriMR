@@ -35,15 +35,20 @@ from ultralytics import YOLO
 from networkmanager import NetworkManager
 
 _MODEL_PATH = "model/yolov10/YOLOv10b_VietFood67_SGD_new_bigger.pt"
+_COREML_MODEL_PATH = "model/yolov10/YOLOv10b_VietFood67_SGD_new_bigger.mlpackage"
 _SKIP_CLASSES = {"Con nguoi", "Con nguoi (Human)", "Human"}
 
 
-def _load_yolo():
+def _load_yolo(device: str):
     model = YOLO(_MODEL_PATH)
-    device = "mps" if torch.backends.mps.is_available() else \
-             "cuda" if torch.cuda.is_available() else "cpu"
     model.to(device)
     print(f"[App] YOLO loaded on {device}")
+    return model
+
+
+def _load_yolo_coreml():
+    model = YOLO(_COREML_MODEL_PATH)
+    print("[App] YOLO CoreML loaded (NPU/Apple runtime)")
     return model
 
 
@@ -128,16 +133,21 @@ class ControllerApp:
             "udp", "0.0.0.0", LABEL_PORT, FRAME_PORT, no_split=False)
         self._nm.start_ip_discovery()
 
-        # YOLO model (optional — app still works for control without it)
-        try:
-            self._model = _load_yolo()
-        except Exception as e:
-            print(f"[App] YOLO unavailable: {e}")
-            self._model = None
+        # Inference backend/model state
+        default_backend = "mps" if torch.backends.mps.is_available() else "cpu"
+        self._backend_var = tk.StringVar(value=default_backend)
+        self._backend_status_var = tk.StringVar(value="Backend: loading...")
+        self._loaded_models: dict[str, YOLO] = {}
+        self._active_backend = ""
+        self._model = None
+
+        self._model_fps = 0.0
+        self._model_latency_ms = 0.0
 
         os.makedirs(DATA_DIR, exist_ok=True)
 
         self._build_ui()
+        self._switch_backend(self._backend_var.get())
 
         # Init UDP frame socket — optional, app works without it
         try:
@@ -216,6 +226,35 @@ class ControllerApp:
             font=(FONT, 10), wraplength=260, justify="left",
         ).pack(anchor="w", padx=14, pady=8)
 
+        # ── Inference backend ─────────────────────────────────────────── #
+        sec = self._section(p, "Inference Backend")
+        for text, value in (("MPS (Apple GPU)", "mps"), ("NPU (CoreML)", "npu"), ("CPU", "cpu")):
+            tk.Radiobutton(
+                sec,
+                text=text,
+                value=value,
+                variable=self._backend_var,
+                command=self._on_backend_changed,
+                bg=PANEL,
+                fg=FG,
+                selectcolor="#3c3c3c",
+                activebackground=PANEL,
+                activeforeground=FG,
+                font=(FONT, 10),
+                anchor="w",
+                highlightthickness=0,
+            ).pack(fill="x", padx=10, pady=1)
+
+        tk.Label(
+            sec,
+            textvariable=self._backend_status_var,
+            bg=PANEL,
+            fg=ACCENT,
+            font=(FONT, 10),
+            wraplength=260,
+            justify="left",
+        ).pack(anchor="w", padx=14, pady=8)
+
     def _build_right(self, p):
         p.rowconfigure(0, weight=1)
         p.columnconfigure(0, weight=1)
@@ -271,6 +310,41 @@ class ControllerApp:
         print(f"[App] → {cmd}  ({ip}:{CMD_PORT})")
         return True
 
+    def _on_backend_changed(self):
+        self._switch_backend(self._backend_var.get())
+
+    def _switch_backend(self, backend: str):
+        if backend == self._active_backend and self._model is not None:
+            return
+
+        try:
+            if backend == "npu":
+                if not os.path.exists(_COREML_MODEL_PATH):
+                    raise RuntimeError(
+                        f"CoreML model not found: {_COREML_MODEL_PATH}. Export it first."
+                    )
+                if "npu" not in self._loaded_models:
+                    self._loaded_models["npu"] = _load_yolo_coreml()
+                self._model = self._loaded_models["npu"]
+            elif backend == "mps":
+                if not torch.backends.mps.is_available():
+                    raise RuntimeError("MPS is not available on this machine/environment.")
+                if "mps" not in self._loaded_models:
+                    self._loaded_models["mps"] = _load_yolo("mps")
+                self._model = self._loaded_models["mps"]
+            else:
+                if "cpu" not in self._loaded_models:
+                    self._loaded_models["cpu"] = _load_yolo("cpu")
+                self._model = self._loaded_models["cpu"]
+
+            self._active_backend = backend
+            self._backend_status_var.set(f"Backend: {backend.upper()}")
+            self._model_fps = 0.0
+            self._model_latency_ms = 0.0
+        except Exception as e:
+            self._backend_status_var.set(f"Backend error: {e}")
+            print(f"[App] Backend switch failed ({backend}): {e}")
+
     # ─────────────────────────────────────────────────────────────────── #
     # Tracking commands
     # ─────────────────────────────────────────────────────────────────── #
@@ -308,18 +382,24 @@ class ControllerApp:
             if remaining[0] == 0:
                 self._receiving = False
 
-        # Start TCP listeners BEFORE sending the commands so HoloLens
-        # can connect immediately when it receives CMD:SEND_*
-        threading.Thread(target=_recv, args=(EYE_FILE_PORT,  eye_path),  daemon=True).start()
-        threading.Thread(target=_recv, args=(HEAD_FILE_PORT, head_path), daemon=True).start()
+        def _orchestrate():
+            # Stop tracking first so HoloLens flushes its CSV before sending
+            self._send_cmd("CMD:STOP_EYE")
+            self._send_cmd("CMD:STOP_HEAD")
+            time.sleep(0.5)   # give HoloLens time to flush and close the file
 
-        time.sleep(0.3)   # give servers time to bind
+            # Start TCP listeners, then tell HoloLens to connect and send
+            threading.Thread(target=_recv, args=(EYE_FILE_PORT,  eye_path),  daemon=True).start()
+            threading.Thread(target=_recv, args=(HEAD_FILE_PORT, head_path), daemon=True).start()
+            time.sleep(0.3)   # give servers time to bind
+            self._send_cmd("CMD:SEND_EYE")
+            self._send_cmd("CMD:SEND_HEAD")
 
-        self._send_cmd("CMD:SEND_EYE")
-        self._send_cmd("CMD:SEND_HEAD")
+        # Run on a background thread so we never block Tkinter's main thread
+        threading.Thread(target=_orchestrate, daemon=True).start()
 
-        self._eye_var.set(f"Eye → {os.path.basename(eye_path)}")
-        self._head_var.set(f"Head → {os.path.basename(head_path)}")
+        self._eye_var.set(f"Eye → saving: {os.path.basename(eye_path)}")
+        self._head_var.set(f"Head → saving: {os.path.basename(head_path)}")
 
     # ─────────────────────────────────────────────────────────────────── #
     # Audio recording
@@ -383,10 +463,18 @@ class ControllerApp:
 
     def _frame_loop(self):
         _logged_res = False
+        infer_count = 0
+        infer_time_accum = 0.0
+        infer_window_start = time.perf_counter()
+
         while True:
             frame = self._nm.receive_image()
             if frame is None:
                 continue
+
+            selected_backend = self._backend_var.get()
+            if selected_backend != self._active_backend:
+                self._switch_backend(selected_backend)
 
             if not _logged_res:
                 h, w = frame.shape[:2]
@@ -396,9 +484,33 @@ class ControllerApp:
             detections = []
             if self._model:
                 try:
-                    results    = self._model.predict(frame, conf=0.65, imgsz=640, verbose=False)
+                    infer_start = time.perf_counter()
+                    if self._active_backend in ("mps", "cpu"):
+                        results = self._model.predict(
+                            frame,
+                            conf=0.65,
+                            imgsz=640,
+                            verbose=False,
+                            device=self._active_backend,
+                        )
+                    else:
+                        # CoreML path uses Apple runtime (NPU/GPU scheduling by CoreML).
+                        results = self._model.predict(frame, conf=0.65, imgsz=640, verbose=False)
                     detections = _build_detections(results)
                     self._nm.send_label("udp", json.dumps(detections).encode())
+
+                    infer_elapsed = time.perf_counter() - infer_start
+                    infer_count += 1
+                    infer_time_accum += infer_elapsed
+
+                    now = time.perf_counter()
+                    window_elapsed = now - infer_window_start
+                    if window_elapsed >= 1.0:
+                        self._model_fps = infer_count / window_elapsed
+                        self._model_latency_ms = (infer_time_accum / infer_count) * 1000.0 if infer_count else 0.0
+                        infer_count = 0
+                        infer_time_accum = 0.0
+                        infer_window_start = now
                 except Exception as e:
                     print(f"[App] Inference error: {e}")
 
@@ -430,6 +542,13 @@ class ControllerApp:
                 cv2.rectangle(frame, (x1, y1 - 22), (x1 + len(label) * 10, y1), (0, 255, 120), -1)
                 cv2.putText(frame, label, (x1 + 4, y1 - 5),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1, cv2.LINE_AA)
+
+        # Draw model performance in-app (top-left corner)
+        backend_text = self._active_backend.upper() if self._active_backend else "NONE"
+        perf_text = f"Backend: {backend_text} | FPS: {self._model_fps:.2f} | Infer: {self._model_latency_ms:.1f} ms"
+        cv2.rectangle(frame, (8, 8), (510, 40), (0, 0, 0), -1)
+        cv2.putText(frame, perf_text, (14, 31),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 220, 255), 2, cv2.LINE_AA)
 
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         img = ImageTk.PhotoImage(Image.fromarray(rgb))

@@ -10,7 +10,7 @@ Expected columns by default:
 
 Example:
     python participant_data/cylinder_heatmap.py \
-        --input participant_data/P01_20260404_134358_eye.csv
+        --input participant_data/P04_20260404_212519_eye.csv
 """
 
 from __future__ import annotations
