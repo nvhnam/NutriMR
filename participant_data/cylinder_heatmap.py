@@ -91,32 +91,31 @@ def load_points(path: Path, x_col: str, y_col: str, z_col: str) -> pd.DataFrame:
 def cylinder_coordinates(
     points: pd.DataFrame, axis: str
 ) -> tuple[np.ndarray, np.ndarray, float, float]:
+    """Convert rel vectors (obj.pos - hitPoint) to cylinder surface angles.
+
+    The CSV stores  rel = obj.pos - hitPoint  (pointing inward to center).
+    To get the outward direction (from center to surface), negate both components
+    before calling arctan2.  Do NOT subtract the mean — that distorts the angle scale.
+    """
     x = points["x"].to_numpy()
     y = points["y"].to_numpy()
     z = points["z"].to_numpy()
 
-    cx = float(np.mean(x))
-    cy = float(np.mean(y))
-    cz = float(np.mean(z))
-
     if axis == "y":
-        rx = x - cx
-        rz = z - cz
-        theta = np.mod(np.arctan2(rz, rx), 2 * np.pi)
-        height = y
-        center_a, center_b = cx, cz
+        # outward direction in XZ plane: (-rel_x, -rel_z)
+        theta = np.mod(np.arctan2(-z, -x), 2 * np.pi)
+        # rel_y = obj.y - hit.y  →  positive means hit was BELOW center
+        # negate so that higher on the cylinder maps to higher on the plot
+        height = -y
+        center_a, center_b = float(np.mean(x)), float(np.mean(z))
     elif axis == "x":
-        ry = y - cy
-        rz = z - cz
-        theta = np.mod(np.arctan2(rz, ry), 2 * np.pi)
-        height = x
-        center_a, center_b = cy, cz
+        theta = np.mod(np.arctan2(-z, -y), 2 * np.pi)
+        height = -x
+        center_a, center_b = float(np.mean(y)), float(np.mean(z))
     else:
-        rx = x - cx
-        ry = y - cy
-        theta = np.mod(np.arctan2(ry, rx), 2 * np.pi)
-        height = z
-        center_a, center_b = cx, cy
+        theta = np.mod(np.arctan2(-y, -x), 2 * np.pi)
+        height = -z
+        center_a, center_b = float(np.mean(x)), float(np.mean(y))
 
     return theta, height, center_a, center_b
 

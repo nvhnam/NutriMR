@@ -205,6 +205,8 @@ class ControllerApp:
 
         self._btn(sec, "⬇  Receive & Save Tracking Data",
                   self._receive_files, "#0a5a8a")
+        self._btn(sec, "🗑  Reset Tracking Data on HoloLens",
+                  self._reset_tracking, "#6b2a2a")
 
         # ── BOTTOM LEFT — Audio recording ─────────────────────────────── #
         sec = self._section(p, "Audio Recording")
@@ -364,6 +366,11 @@ class ControllerApp:
     def _stop_head(self):
         if self._send_cmd("CMD:STOP_HEAD"):
             self._head_var.set("Head tracking: stopped ■")
+
+    def _reset_tracking(self):
+        if self._send_cmd("CMD:RESET"):
+            self._eye_var.set("Eye tracking: reset ✓")
+            self._head_var.set("Head tracking: reset ✓")
 
     def _receive_files(self):
         if self._receiving:
