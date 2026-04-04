@@ -103,17 +103,17 @@ def cylinder_coordinates(
 
     if axis == "y":
         # outward direction in XZ plane: (-rel_x, -rel_z)
-        theta = np.mod(np.arctan2(-z, -x), 2 * np.pi)
+        theta = np.mod(-np.arctan2(-z, -x), 2 * np.pi)
         # rel_y = obj.y - hit.y  →  positive means hit was BELOW center
         # negate so that higher on the cylinder maps to higher on the plot
         height = -y
         center_a, center_b = float(np.mean(x)), float(np.mean(z))
     elif axis == "x":
-        theta = np.mod(np.arctan2(-z, -y), 2 * np.pi)
+        theta = np.mod(-np.arctan2(-z, -y), 2 * np.pi)
         height = -x
         center_a, center_b = float(np.mean(y)), float(np.mean(z))
     else:
-        theta = np.mod(np.arctan2(-y, -x), 2 * np.pi)
+        theta = np.mod(-np.arctan2(-y, -x), 2 * np.pi)
         height = -z
         center_a, center_b = float(np.mean(x)), float(np.mean(y))
 
