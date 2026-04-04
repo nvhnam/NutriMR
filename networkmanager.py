@@ -102,7 +102,10 @@ class NetworkManager:
             while self._discovery_running:
                 try:
                     data, _ = s.recvfrom(256)
-                    message = data.decode().strip()
+                    try:
+                        message = data.decode().strip()
+                    except UnicodeDecodeError:
+                        continue  # binary packet (e.g. JPEG frame) on port 5010 — ignore
                     if message.startswith("HOLOLENS:"):
                         ip = message[len("HOLOLENS:"):]
                         if ip != self._hololens_ip:
