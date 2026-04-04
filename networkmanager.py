@@ -4,11 +4,24 @@ import socket
 import numpy as np
 import cv2
 import time
+import threading
 
 from ultralytics import data
+
+# Ports for IP discovery handshake
+_HOLOLENS_BROADCAST_PORT = 5010   # HoloLens → Mac
+_MAC_BROADCAST_PORT = 5011        # Mac → HoloLens
+
+# Broadcast timing:
+#   0–60 s : every 2 s  (fast phase — acquire IP quickly)
+#   60 s + : every 10 s (slow verify phase)
+_FAST_INTERVAL = 2    # seconds
+_FAST_DURATION = 60   # seconds
+_SLOW_INTERVAL = 10   # seconds
+
 class NetworkManager:
-    LISTEN_IP = "0.0.0.0"           
-    CHUNK_SIZE = 1200  
+    LISTEN_IP = "0.0.0.0"
+    CHUNK_SIZE = 1200
     def __init__(self, protocol, UNITY_IP, UNITY_PORT, LISTEN_PORT, no_split):
         self.protocol = protocol
         self.UNITY_IP = UNITY_IP
@@ -17,6 +30,90 @@ class NetworkManager:
         self.sock_label = self.init_label_network("udp")
         self.no_split = no_split
         self.call_number = 0
+
+        self._hololens_ip = None
+        self._discovery_running = False
+        self._discovery_threads = []
+
+    # ------------------------------------------------------------------ #
+    #  IP Discovery                                                        #
+    # ------------------------------------------------------------------ #
+
+    @property
+    def hololens_ip(self):
+        return self._hololens_ip
+
+    @staticmethod
+    def _get_local_ip():
+        """Return the Mac's primary local (LAN) IP address."""
+        try:
+            # Connect to a public address without sending data — just to resolve route
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except Exception:
+            return "0.0.0.0"
+
+    def start_ip_discovery(self):
+        """
+        Start two background threads:
+          1. Broadcast this Mac's IP on port 5011 every 2 s
+          2. Listen on port 5010 for the HoloLens IP
+        Discovered HoloLens IP is stored in self.hololens_ip and also
+        applied automatically via change_unity_ip().
+        """
+        if self._discovery_running:
+            return
+        self._discovery_running = True
+
+        t_broadcast = threading.Thread(target=self._broadcast_mac_ip, daemon=True)
+        t_listen = threading.Thread(target=self._listen_for_hololens_ip, daemon=True)
+
+        self._discovery_threads = [t_broadcast, t_listen]
+        t_broadcast.start()
+        t_listen.start()
+        print(f"[Discovery] Started — Mac IP: {self._get_local_ip()}")
+
+    def stop_ip_discovery(self):
+        self._discovery_running = False
+
+    def _broadcast_mac_ip(self):
+        local_ip = self._get_local_ip()
+        message = f"MAC:{local_ip}".encode()
+        start_time = time.time()
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            while self._discovery_running:
+                try:
+                    s.sendto(message, ("<broadcast>", _MAC_BROADCAST_PORT))
+                except Exception as e:
+                    print(f"[Discovery] Broadcast error: {e}")
+                elapsed = time.time() - start_time
+                interval = _FAST_INTERVAL if elapsed < _FAST_DURATION else _SLOW_INTERVAL
+                time.sleep(interval)
+
+    def _listen_for_hololens_ip(self):
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind(("0.0.0.0", _HOLOLENS_BROADCAST_PORT))
+            s.settimeout(1.0)
+            while self._discovery_running:
+                try:
+                    data, _ = s.recvfrom(256)
+                    message = data.decode().strip()
+                    if message.startswith("HOLOLENS:"):
+                        ip = message[len("HOLOLENS:"):]
+                        if ip != self._hololens_ip:
+                            self._hololens_ip = ip
+                            print(f"[Discovery] HoloLens IP: {ip}")
+                            self.change_unity_ip(ip)
+                except socket.timeout:
+                    continue
+                except Exception as e:
+                    if self._discovery_running:
+                        print(f"[Discovery] Listen error: {e}")
 
     # This is for TCP
     def recv_all(self, length):

@@ -49,7 +49,7 @@ class App:
             self.prev_time = current_time
 
             # Run YOLO inference
-            results = self.modelManager.do_inference(0.85, frame)
+            results = self.modelManager.do_inference(0.65, frame)
             detections = self.modelManager.build_detections(results)
             message = json.dumps(detections).encode("utf-8")
             print("Detections:", message)
