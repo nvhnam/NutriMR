@@ -1,4 +1,5 @@
 from datetime import datetime
+import os
 import struct
 import socket
 import numpy as np
@@ -97,6 +98,8 @@ class NetworkManager:
     def _listen_for_hololens_ip(self):
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            if hasattr(socket, "SO_REUSEPORT"):
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
             s.bind(("0.0.0.0", _HOLOLENS_BROADCAST_PORT))
             s.settimeout(1.0)
             while self._discovery_running:
@@ -142,6 +145,9 @@ class NetworkManager:
 
         elif self.protocol == "udp":
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            if hasattr(socket, "SO_REUSEPORT"):
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
             sock.bind((self.LISTEN_IP, self.LISTEN_PORT))
             sock.settimeout(0.01)
             self.sock_frame = sock
@@ -261,30 +267,34 @@ class NetworkManager:
         self.UNITY_IP = new_ip
         self.refresh()
     
-    def receive_file(self, port):
-        print(f'call number: {self.call_number}')
+    def receive_file(self, port, filepath=None):
+        """
+        TCP server: receives one file from HoloLens on `port`.
+        If `filepath` is given, the file is saved there; otherwise a
+        timestamped name is used in the current directory.
+        """
         self.call_number += 1
-        if self.protocol == "udp":
-            # tcp only
-            pass
-        elif self.protocol == "tcp":
-            HOST = "0.0.0.0"
-            BUFFER_SIZE = 4096
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                s.bind((HOST, port))
-                s.listen(1)
-                print('Waiting for connection...')
-                conn, addr = s.accept()
-                with conn:
-                    print('Connected by', addr)
-                    # get current date and time
-                    time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    file_name = f"received_file_{time}.csv"
-                    with open(file_name, "wb") as f:
-                        while True:
-                            data = conn.recv(BUFFER_SIZE)
-                            if not data:
-                                break
-                            f.write(data)
-                    print(f"File received successfully at {time}")
+        print(f'[NetworkManager] receive_file call #{self.call_number}, port={port}')
+
+        if filepath is None:
+            ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            filepath = f"received_file_{ts}.csv"
+
+        HOST        = "0.0.0.0"
+        BUFFER_SIZE = 4096
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind((HOST, port))
+            s.listen(1)
+            print(f'[NetworkManager] Waiting for connection on port {port}...')
+            conn, addr = s.accept()
+            with conn:
+                print(f'[NetworkManager] Connected by {addr}')
+                os.makedirs(os.path.dirname(filepath) or ".", exist_ok=True)
+                with open(filepath, "wb") as f:
+                    while True:
+                        data = conn.recv(BUFFER_SIZE)
+                        if not data:
+                            break
+                        f.write(data)
+                print(f'[NetworkManager] File saved to {filepath}')
