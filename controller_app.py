@@ -393,6 +393,7 @@ class ControllerApp:
                 print(f"[App] First frame received: {w}x{h}")
                 _logged_res = True
 
+            detections = []
             if self._model:
                 try:
                     results    = self._model.predict(frame, conf=0.65, imgsz=640, verbose=False)
@@ -401,9 +402,9 @@ class ControllerApp:
                 except Exception as e:
                     print(f"[App] Inference error: {e}")
 
-            self._show_frame(frame)
+            self._show_frame(frame, detections)
 
-    def _show_frame(self, frame):
+    def _show_frame(self, frame, detections=None):
         rw = self._img_lbl.winfo_width()
         rh = self._img_lbl.winfo_height()
         if rw < 10 or rh < 10:
@@ -412,8 +413,26 @@ class ControllerApp:
         h, w  = frame.shape[:2]
         scale = min(rw / w, rh / h)
         frame = cv2.resize(frame, (int(w * scale), int(h * scale)))
-        rgb   = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        img   = ImageTk.PhotoImage(Image.fromarray(rgb))
+
+        # Draw detections on the displayed frame
+        if detections:
+            fh, fw = frame.shape[:2]
+            for d in detections:
+                b    = d["bbox"]
+                cx   = int(b["cx"] * fw / w)
+                cy   = int(b["cy"] * fh / h)
+                bw   = int(b["w"]  * fw / w)
+                bh   = int(b["h"]  * fh / h)
+                x1, y1 = cx - bw // 2, cy - bh // 2
+                x2, y2 = cx + bw // 2, cy + bh // 2
+                label  = f"{d['class']}  {d['confidence']:.0%}"
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 120), 2)
+                cv2.rectangle(frame, (x1, y1 - 22), (x1 + len(label) * 10, y1), (0, 255, 120), -1)
+                cv2.putText(frame, label, (x1 + 4, y1 - 5),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1, cv2.LINE_AA)
+
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        img = ImageTk.PhotoImage(Image.fromarray(rgb))
         self._img_lbl.after(0, self._set_img, img)
 
     def _set_img(self, img):
