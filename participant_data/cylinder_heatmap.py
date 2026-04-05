@@ -123,10 +123,9 @@ def cylinder_coordinates(
 def build_heatmap(
     theta: np.ndarray, height: np.ndarray, theta_bins: int, height_bins: int
 ) -> tuple[np.ndarray, tuple[float, float, float, float]]:
-    h_min = float(np.min(height))
-    h_max = float(np.max(height))
-    if h_max <= h_min:
-        h_max = h_min + 1e-6
+    # Keep a fixed vertical span and ignore samples outside this interval.
+    h_min = -3.0
+    h_max = 3.0
 
     hist, h_edges, t_edges = np.histogram2d(
         height,
