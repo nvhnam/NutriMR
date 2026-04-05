@@ -227,6 +227,7 @@ class ControllerApp:
             sec, textvariable=self._conn_var, bg=PANEL, fg=ACCENT,
             font=(FONT, 10), wraplength=260, justify="left",
         ).pack(anchor="w", padx=14, pady=8)
+        self._btn(sec, "↺  Refresh Connection", self._refresh_connection, "#2d5a8e")
 
         # ── Inference backend ─────────────────────────────────────────── #
         sec = self._section(p, "Inference Backend")
@@ -574,6 +575,11 @@ class ControllerApp:
         self._conn_var.set(
             f"HoloLens: {ip}" if ip else "Searching for HoloLens…")
         self.root.after(2000, self._poll_connection)
+
+    def _refresh_connection(self):
+        """Re-run the IP exchange handshake without restarting the app."""
+        self._conn_var.set("Refreshing…")
+        threading.Thread(target=self._nm.restart_ip_discovery, daemon=True).start()
 
 
 # ──────────────────────────────────────────────────────────────────────── #

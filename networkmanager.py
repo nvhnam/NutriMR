@@ -80,6 +80,24 @@ class NetworkManager:
     def stop_ip_discovery(self):
         self._discovery_running = False
 
+    def restart_ip_discovery(self):
+        """Stop current discovery, clear cached HoloLens IP, and start fresh.
+        Safe to call at any time — runs the brief sleep on the calling thread,
+        so invoke from a background thread to avoid blocking the UI.
+        """
+        self.stop_ip_discovery()
+        self._hololens_ip = None
+        # The listener socket has a 1-second timeout, so wait slightly longer
+        # to ensure it exits and releases the port before we rebind.
+        time.sleep(1.5)
+        self._discovery_running = True
+        t_broadcast = threading.Thread(target=self._broadcast_mac_ip, daemon=True)
+        t_listen    = threading.Thread(target=self._listen_for_hololens_ip, daemon=True)
+        self._discovery_threads = [t_broadcast, t_listen]
+        t_broadcast.start()
+        t_listen.start()
+        print(f"[Discovery] Restarted — Mac IP: {self._get_local_ip()}")
+
     def _broadcast_mac_ip(self):
         local_ip = self._get_local_ip()
         message = f"MAC:{local_ip}".encode()
