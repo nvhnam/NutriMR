@@ -15,7 +15,8 @@ import json
 import time
 import threading
 import socket
-from datetime import datetime
+import csv
+from datetime import datetime, timezone
 
 import cv2
 import numpy as np
@@ -84,6 +85,8 @@ EYE_FILE_PORT  = 5012   # HoloLens → Mac  eye CSV  (TCP)
 HEAD_FILE_PORT = 5013   # HoloLens → Mac  head CSV (TCP)
 FRAME_PORT     = 5016   # HoloLens → Mac  frames   (UDP)
 LABEL_PORT     = 5014   # Mac → HoloLens  labels   (UDP)
+MARKER_FILE_PORT = 5017 # HoloLens → Mac  sync marker CSV (TCP)
+EEG_MARKER_HOST = "127.0.0.1"  # live_monitor.py runs on the same Mac
 
 DATA_DIR = "participant_data"
 
@@ -107,6 +110,14 @@ def _lighten(hex_color: str, amount: int = 30) -> str:
     return f"#{r:02x}{g:02x}{b:02x}"
 
 
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _utc_iso(dt: datetime) -> str:
+    return dt.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
 class ControllerApp:
     def __init__(self, root: tk.Tk):
         self.root = root
@@ -124,6 +135,8 @@ class ControllerApp:
         self._audio_start: datetime | None = None
         self._audio_stream = None
         self._sample_rate  = 44100
+        self._marker_seq   = 0
+        self._marker_log_path: str | None = None
 
         # UDP socket for sending commands to HoloLens
         self._cmd_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -207,6 +220,23 @@ class ControllerApp:
                   self._receive_files, "#0a5a8a")
         self._btn(sec, "🗑  Reset Tracking Data on HoloLens",
                   self._reset_tracking, "#6b2a2a")
+
+        # ── Sync markers ─────────────────────────────────────────────── #
+        sec = self._section(p, "Sync Markers")
+        self._marker_label_var = tk.StringVar(value="task_start")
+        self._marker_status_var = tk.StringVar(
+            value="Ready to stamp events into Mac, HoloLens, and EEG logs")
+
+        tk.Entry(
+            sec, textvariable=self._marker_label_var,
+            bg="#3c3c3c", fg="white", insertbackground="white",
+            relief="flat", font=(FONT, 12), bd=4,
+        ).pack(fill="x", padx=10, pady=(8, 4))
+        self._btn(sec, "✦  Send Sync Marker", self._send_custom_marker, "#2d5a8e")
+        tk.Label(
+            sec, textvariable=self._marker_status_var, bg=PANEL, fg=WARN,
+            font=(FONT, 10), wraplength=260, justify="left",
+        ).pack(anchor="w", padx=14, pady=(6, 8))
 
         # ── BOTTOM LEFT — Audio recording ─────────────────────────────── #
         sec = self._section(p, "Audio Recording")
@@ -304,6 +334,103 @@ class ControllerApp:
     def _path(self, filename: str) -> str:
         return os.path.join(DATA_DIR, filename)
 
+    def _set_marker_status(self, message: str) -> None:
+        self.root.after(0, lambda: self._marker_status_var.set(message))
+
+    def _normalize_marker_label(self, raw: str) -> str:
+        label = "_".join(raw.strip().split())
+        return label or "marker"
+
+    def _ensure_marker_log(self) -> str:
+        if self._marker_log_path:
+            return self._marker_log_path
+
+        path = self._path(f"{self._prefix()}_controller_markers.csv")
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                "sent_utc",
+                "sent_unix_ms",
+                "marker_id",
+                "label",
+                "participant",
+                "notes",
+                "targets",
+                "payload_json",
+            ])
+        self._marker_log_path = path
+        return path
+
+    def _append_marker_log(self, payload: dict, targets: list[str]) -> None:
+        path = self._ensure_marker_log()
+        with open(path, "a", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                payload["sent_utc"],
+                payload["sent_unix_ms"],
+                payload["marker_id"],
+                payload["label"],
+                payload["participant"],
+                payload["notes"],
+                ";".join(targets),
+                json.dumps(payload, separators=(",", ":")),
+            ])
+
+    def _build_marker_payload(self, label: str, notes: str = "") -> dict:
+        now = _utc_now()
+        participant = self._name_var.get().strip() or "participant"
+        self._marker_seq += 1
+        return {
+            "type": "sync_marker",
+            "version": 1,
+            "marker_id": (
+                f"{participant}_{now.strftime('%Y%m%dT%H%M%S%f')}_"
+                f"{self._marker_seq:04d}"
+            ),
+            "label": self._normalize_marker_label(label),
+            "participant": participant,
+            "source": "controller_app",
+            "sent_utc": _utc_iso(now),
+            "sent_unix_ms": int(now.timestamp() * 1000),
+            "notes": notes,
+        }
+
+    def _broadcast_marker(self, label: str, notes: str = "") -> bool:
+        payload = self._build_marker_payload(label, notes)
+        message = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+
+        targets: list[str] = []
+        errors: list[str] = []
+
+        try:
+            self._cmd_sock.sendto(message, (EEG_MARKER_HOST, CMD_PORT))
+            targets.append(f"EEG@{EEG_MARKER_HOST}:{CMD_PORT}")
+        except OSError as e:
+            errors.append(f"EEG send failed: {e}")
+
+        hololens_ip = self._nm.hololens_ip
+        if hololens_ip:
+            try:
+                self._cmd_sock.sendto(message, (hololens_ip, CMD_PORT))
+                targets.append(f"HoloLens@{hololens_ip}:{CMD_PORT}")
+            except OSError as e:
+                errors.append(f"HoloLens send failed: {e}")
+        else:
+            errors.append("HoloLens IP not discovered yet")
+
+        self._append_marker_log(payload, targets)
+
+        status = (
+            f"Sent {payload['label']} → {', '.join(targets)}"
+            if targets else
+            f"Logged {payload['label']} locally only"
+        )
+        if errors:
+            status = f"{status} | {'; '.join(errors)}"
+        self._set_marker_status(status)
+        print(f"[Marker] {status}")
+        return bool(targets)
+
     def _send_cmd(self, cmd: str) -> bool:
         ip = self._nm.hololens_ip
         if not ip:
@@ -354,22 +481,27 @@ class ControllerApp:
 
     def _start_eye(self):
         if self._send_cmd("CMD:START_EYE"):
+            self._broadcast_marker("eye_tracking_start")
             self._eye_var.set("Eye tracking: recording ●")
 
     def _stop_eye(self):
         if self._send_cmd("CMD:STOP_EYE"):
+            self._broadcast_marker("eye_tracking_stop")
             self._eye_var.set("Eye tracking: stopped ■")
 
     def _start_head(self):
         if self._send_cmd("CMD:START_HEAD"):
+            self._broadcast_marker("head_tracking_start")
             self._head_var.set("Head tracking: recording ●")
 
     def _stop_head(self):
         if self._send_cmd("CMD:STOP_HEAD"):
+            self._broadcast_marker("head_tracking_stop")
             self._head_var.set("Head tracking: stopped ■")
 
     def _reset_tracking(self):
         if self._send_cmd("CMD:RESET"):
+            self._broadcast_marker("tracking_reset")
             self._eye_var.set("Eye tracking: reset ✓")
             self._head_var.set("Head tracking: reset ✓")
 
@@ -379,10 +511,11 @@ class ControllerApp:
             return
         self._receiving = True
 
-        prefix    = self._prefix()
-        eye_path  = self._path(f"{prefix}_eye.csv")
-        head_path = self._path(f"{prefix}_head.csv")
-        remaining = [2]
+        prefix       = self._prefix()
+        eye_path     = self._path(f"{prefix}_eye.csv")
+        head_path    = self._path(f"{prefix}_head.csv")
+        marker_path  = self._path(f"{prefix}_hololens_markers.csv")
+        remaining = [3]
 
         def _recv(port, path):
             self._nm.receive_file(port, path)
@@ -399,15 +532,21 @@ class ControllerApp:
             # Start TCP listeners, then tell HoloLens to connect and send
             threading.Thread(target=_recv, args=(EYE_FILE_PORT,  eye_path),  daemon=True).start()
             threading.Thread(target=_recv, args=(HEAD_FILE_PORT, head_path), daemon=True).start()
+            threading.Thread(target=_recv, args=(MARKER_FILE_PORT, marker_path), daemon=True).start()
             time.sleep(0.3)   # give servers time to bind
+            self._broadcast_marker("hololens_export_requested")
             self._send_cmd("CMD:SEND_EYE")
             self._send_cmd("CMD:SEND_HEAD")
+            self._send_cmd("CMD:SEND_MARKERS")
 
         # Run on a background thread so we never block Tkinter's main thread
         threading.Thread(target=_orchestrate, daemon=True).start()
 
         self._eye_var.set(f"Eye → saving: {os.path.basename(eye_path)}")
         self._head_var.set(f"Head → saving: {os.path.basename(head_path)}")
+        self._set_marker_status(
+            f"HoloLens markers → saving: {os.path.basename(marker_path)}"
+        )
 
     # ─────────────────────────────────────────────────────────────────── #
     # Audio recording
@@ -430,6 +569,7 @@ class ControllerApp:
         self._audio_stream = sd.InputStream(
             samplerate=self._sample_rate, channels=1, callback=_cb)
         self._audio_stream.start()
+        self._broadcast_marker("audio_start")
         self._audio_var.set(
             f"● Recording since {self._audio_start.strftime('%H:%M:%S')}")
 
@@ -463,7 +603,14 @@ class ControllerApp:
             f.write(f"channels,1\n")
             f.write(f"file,{wav_path}\n")
 
+        self._broadcast_marker("audio_stop")
         self._audio_var.set(f"Saved: {os.path.basename(wav_path)}")
+
+    def _send_custom_marker(self):
+        raw_label = self._marker_label_var.get()
+        label = self._normalize_marker_label(raw_label)
+        self._marker_label_var.set(label)
+        self._broadcast_marker(label)
 
     # ─────────────────────────────────────────────────────────────────── #
     # Frame receive → YOLO infer → label send → display
