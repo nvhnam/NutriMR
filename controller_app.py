@@ -134,7 +134,7 @@ class ControllerApp:
         self._nm.start_ip_discovery()
 
         # Inference backend/model state
-        default_backend = "mps" if torch.backends.mps.is_available() else "cpu"
+        default_backend = "npu"
         self._backend_var = tk.StringVar(value=default_backend)
         self._backend_status_var = tk.StringVar(value="Backend: loading...")
         self._loaded_models: dict[str, YOLO] = {}
