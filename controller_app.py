@@ -83,6 +83,7 @@ def _build_detections(results) -> list:
 CMD_PORT       = 5015   # Mac → HoloLens  commands (UDP)
 EYE_FILE_PORT  = 5012   # HoloLens → Mac  eye CSV  (TCP)
 HEAD_FILE_PORT = 5013   # HoloLens → Mac  head CSV (TCP)
+LABEL_FILE_PORT = 5018  # HoloLens → Mac  label CSV (TCP)
 FRAME_PORT     = 5016   # HoloLens → Mac  frames   (UDP)
 LABEL_PORT     = 5014   # Mac → HoloLens  labels   (UDP)
 MARKER_FILE_PORT = 5017 # HoloLens → Mac  sync marker CSV (TCP)
@@ -205,6 +206,7 @@ class ControllerApp:
 
         self._eye_var  = tk.StringVar(value="Eye tracking: idle")
         self._head_var = tk.StringVar(value="Head tracking: idle")
+        self._label_var = tk.StringVar(value="Label tracking: idle")
 
         self._btn(sec, "▶  Start Eye Tracking",  self._start_eye,  BTN_GO)
         self._btn(sec, "■  Stop Eye Tracking",   self._stop_eye)
@@ -214,6 +216,11 @@ class ControllerApp:
         self._btn(sec, "▶  Start Head Tracking", self._start_head, BTN_GO)
         self._btn(sec, "■  Stop Head Tracking",  self._stop_head)
         tk.Label(sec, textvariable=self._head_var, bg=PANEL, fg=ACCENT,
+                 font=(FONT, 10)).pack(anchor="w", padx=14, pady=(0, 6))
+
+        self._btn(sec, "▶  Start Label Tracking", self._start_label, BTN_GO)
+        self._btn(sec, "■  Stop Label Tracking",  self._stop_label)
+        tk.Label(sec, textvariable=self._label_var, bg=PANEL, fg=ACCENT,
                  font=(FONT, 10)).pack(anchor="w", padx=14, pady=(0, 6))
 
         self._btn(sec, "⬇  Receive & Save Tracking Data",
@@ -499,11 +506,22 @@ class ControllerApp:
             self._broadcast_marker("head_tracking_stop")
             self._head_var.set("Head tracking: stopped ■")
 
+    def _start_label(self):
+        if self._send_cmd("CMD:START_LABEL"):
+            self._broadcast_marker("label_tracking_start")
+            self._label_var.set("Label tracking: recording ●")
+
+    def _stop_label(self):
+        if self._send_cmd("CMD:STOP_LABEL"):
+            self._broadcast_marker("label_tracking_stop")
+            self._label_var.set("Label tracking: stopped ■")
+
     def _reset_tracking(self):
         if self._send_cmd("CMD:RESET"):
             self._broadcast_marker("tracking_reset")
             self._eye_var.set("Eye tracking: reset ✓")
             self._head_var.set("Head tracking: reset ✓")
+            self._label_var.set("Label tracking: reset ✓")
 
     def _receive_files(self):
         if self._receiving:
@@ -514,8 +532,9 @@ class ControllerApp:
         prefix       = self._prefix()
         eye_path     = self._path(f"{prefix}_eye.csv")
         head_path    = self._path(f"{prefix}_head.csv")
+        label_path   = self._path(f"{prefix}_label.csv")
         marker_path  = self._path(f"{prefix}_hololens_markers.csv")
-        remaining = [3]
+        remaining = [4]
 
         def _recv(port, path):
             self._nm.receive_file(port, path)
@@ -527,16 +546,19 @@ class ControllerApp:
             # Stop tracking first so HoloLens flushes its CSV before sending
             self._send_cmd("CMD:STOP_EYE")
             self._send_cmd("CMD:STOP_HEAD")
+            self._send_cmd("CMD:STOP_LABEL")
             time.sleep(0.5)   # give HoloLens time to flush and close the file
 
             # Start TCP listeners, then tell HoloLens to connect and send
             threading.Thread(target=_recv, args=(EYE_FILE_PORT,  eye_path),  daemon=True).start()
             threading.Thread(target=_recv, args=(HEAD_FILE_PORT, head_path), daemon=True).start()
+            threading.Thread(target=_recv, args=(LABEL_FILE_PORT, label_path), daemon=True).start()
             threading.Thread(target=_recv, args=(MARKER_FILE_PORT, marker_path), daemon=True).start()
             time.sleep(0.3)   # give servers time to bind
             self._broadcast_marker("hololens_export_requested")
             self._send_cmd("CMD:SEND_EYE")
             self._send_cmd("CMD:SEND_HEAD")
+            self._send_cmd("CMD:SEND_LABEL")
             self._send_cmd("CMD:SEND_MARKERS")
 
         # Run on a background thread so we never block Tkinter's main thread
@@ -544,6 +566,7 @@ class ControllerApp:
 
         self._eye_var.set(f"Eye → saving: {os.path.basename(eye_path)}")
         self._head_var.set(f"Head → saving: {os.path.basename(head_path)}")
+        self._label_var.set(f"Label → saving: {os.path.basename(label_path)}")
         self._set_marker_status(
             f"HoloLens markers → saving: {os.path.basename(marker_path)}"
         )
