@@ -55,14 +55,14 @@ class_names = [
         }
     },
     {
-        "name": "Banh trang (Rice paper)",
-        "serving_type": "per 100g",
+        "name": "Banh chung (Square sticky rice cake)",
+        "serving_type": "1 serving",
         "nutrition": {
-            "Calories": 300,
-            "Fat": 0.5,
-            "Saturates": 0.1,
-            "Sugar": 0,
-            "Salt": 0.2
+            "Calories": 600,
+            "Fat": 10,
+            "Saturates": 3,
+            "Sugar": 1,
+            "Salt": 1.2
         }
     },
     {
@@ -275,14 +275,14 @@ class_names = [
         }
     },
     {
-        "name": "Com (Rice)",
+        "name": "Com tam (Broken rice)",
         "serving_type": "per 100g",
         "nutrition": {
-            "Calories": 130,
-            "Fat": 0.3,
+            "Calories": 150,
+            "Fat": 0.5,
             "Saturates": 0,
             "Sugar": 0,
-            "Salt": 0
+            "Salt": 0.02
         }
     },
     {
@@ -374,14 +374,14 @@ class_names = [
         }
     },
     {
-        "name": "Hamburger",
+        "name": "Banh mi (Vietnamese baguette sandwich)",
         "serving_type": "1 serving",
         "nutrition": {
             "Calories": 350,
-            "Fat": 20,
-            "Saturates": 8,
-            "Sugar": 5,
-            "Salt": 1.8
+            "Fat": 12,
+            "Saturates": 4,
+            "Sugar": 4,
+            "Salt": 1.5
         }
     },
     {
@@ -671,14 +671,14 @@ class_names = [
         }
     },
     {
-        "name": "Com chien duong chau (Yangzhou fried rice)",
-        "serving_type": "1 serving",
+        "name": "Com tam (Broken rice)",
+        "serving_type": "per 100g",
         "nutrition": {
-            "Calories": 600,
-            "Fat": 20,
-            "Saturates": 4,
-            "Sugar": 4,
-            "Salt": 2.2
+            "Calories": 150,
+            "Fat": 0.5,
+            "Saturates": 0,
+            "Sugar": 0,
+            "Salt": 0.02
         }
     },
     {
